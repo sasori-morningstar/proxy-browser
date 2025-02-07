@@ -162,7 +162,7 @@ public class MainActivity extends AppCompatActivity {
 
                     Future<WebResourceResponse> future = executor.submit(() -> {
                         try {
-                            OkHttpClient proxyClient = createProxyClient();
+                            OkHttpClient proxyClient = ProxyUtils.createProxyClient(MainActivity.this);
 
                             // Use stored user agent string instead of accessing WebView
                             String proxyAuth = proxyUsername + "-session-" + sessionId + ":" + proxyPassword;

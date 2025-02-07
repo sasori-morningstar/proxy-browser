@@ -46,8 +46,10 @@ public class ProxySettingsActivity extends AppCompatActivity {
             editor.putString("proxy_password", proxyPassword);
             editor.apply();
 
-            // Optionally, reconfigure the proxy settings immediately by calling setupProxyAuthentication()
-            // or instructing the user to restart the activity/app.
+
+            // Update the proxy authentication with the new username and password.
+            ProxyUtils.setupProxyAuthentication(ProxySettingsActivity.this);
+            
             finish();
         });
     }
