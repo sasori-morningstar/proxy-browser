@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <EditText
+        android:id="@+id/proxyHostEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Proxy Host" />
+
+    <EditText
+        android:id="@+id/proxyPortEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Proxy Port"
+        android:inputType="number" />
+
+    <EditText
+        android:id="@+id/proxyUsernameEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Proxy Username" />
+
+    <EditText
+        android:id="@+id/proxyPasswordEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Proxy Password"
+        android:inputType="textPassword" />
+
+    <Button
+        android:id="@+id/saveButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Save Settings" />
+
+</LinearLayout>

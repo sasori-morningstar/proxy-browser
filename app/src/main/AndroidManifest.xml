@@ -23,6 +23,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Declaration of ProxySettingsActivity -->
+        <activity
+            android:name=".ProxySettingsActivity"
+            android:label="Proxy Settings" />
     </application>
 
 </manifest>

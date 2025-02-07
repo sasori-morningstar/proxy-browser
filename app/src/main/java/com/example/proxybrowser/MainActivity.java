@@ -1,5 +1,7 @@
 package com.example.proxybrowser;
 
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -29,7 +31,7 @@ import java.util.HashMap;
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private EditText urlInput;
-    private Button goButton, backButton, forwardButton;
+    private Button goButton, backButton, forwardButton, settingsButton;
     private ExecutorService executor;
     private String currentSessionId;
     private String userAgentString;
@@ -80,21 +82,37 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupProxyAuthentication() {
+        SharedPreferences prefs = getSharedPreferences("proxyPrefs", MODE_PRIVATE);
+        final String proxyUsername = prefs.getString("proxy_username", "");
+        final String proxyPassword = prefs.getString("proxy_password", "");
         Authenticator.setDefault(new Authenticator() {
             @Override
             protected PasswordAuthentication getPasswordAuthentication() {
                 return new PasswordAuthentication(
-                        PROXY_USERNAME,
-                        PROXY_PASSWORD.toCharArray()
+                        proxyUsername,
+                        proxyPassword.toCharArray()
                 );
             }
         });
     }
 
     private OkHttpClient createProxyClient() {
+        SharedPreferences prefs = getSharedPreferences("proxyPrefs", MODE_PRIVATE);
+        String proxyHost = prefs.getString("proxy_host", "");
+        int proxyPort = prefs.getInt("proxy_port", 0);
+
+        // Check if a proxy has been configured
+        if (proxyHost.isEmpty() || proxyPort == 0) {
+            // Optionally: Return a client without proxy or alert the user.
+            return new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build();
+        }
         Proxy proxy = new Proxy(
                 Proxy.Type.SOCKS,
-                new InetSocketAddress(PROXY_HOST, PROXY_PORT)
+                new InetSocketAddress(proxyHost, proxyPort)
         );
 
         return new OkHttpClient.Builder()
@@ -111,9 +129,13 @@ public class MainActivity extends AppCompatActivity {
         goButton = findViewById(R.id.goButton);
         backButton = findViewById(R.id.backButton);
         forwardButton = findViewById(R.id.forwardButton);
+        settingsButton = findViewById(R.id.settingsButton);
     }
 
     private void configureWebView() {
+        SharedPreferences prefs = getSharedPreferences("proxyPrefs", MODE_PRIVATE);
+        final String proxyUsername = prefs.getString("proxy_username", "");
+        final String proxyPassword = prefs.getString("proxy_password", "");
         WebSettings webSettings = webView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
@@ -143,7 +165,7 @@ public class MainActivity extends AppCompatActivity {
                             OkHttpClient proxyClient = createProxyClient();
 
                             // Use stored user agent string instead of accessing WebView
-                            String proxyAuth = PROXY_USERNAME + "-session-" + sessionId + ":" + PROXY_PASSWORD;
+                            String proxyAuth = proxyUsername + "-session-" + sessionId + ":" + proxyPassword;
                             String credentials = android.util.Base64.encodeToString(
                                     proxyAuth.getBytes(),
                                     android.util.Base64.NO_WRAP
@@ -266,6 +288,11 @@ public class MainActivity extends AppCompatActivity {
                 generateNewSession();
                 webView.goForward();
             }
+        });
+
+        settingsButton.setOnClickListener(v -> {
+            Intent intent = new Intent(MainActivity.this, ProxySettingsActivity.class);
+            startActivity(intent);
         });
     }
 
