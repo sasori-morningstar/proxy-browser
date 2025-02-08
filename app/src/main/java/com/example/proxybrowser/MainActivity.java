@@ -34,6 +34,9 @@ public class MainActivity extends AppCompatActivity {
     private String currentSessionId;
     private String userAgentString;
 
+    private volatile OkHttpClient proxyClient; // Single client instance
+    private final Object proxyClientLock = new Object();
+
     // Proxy configuration
     private static final String PROXY_HOST = "rotating.proxyempire.io";
     private static final int PROXY_PORT = 9000;
@@ -61,12 +64,26 @@ public class MainActivity extends AppCompatActivity {
 
         executor = Executors.newFixedThreadPool(4);
         setupProxyAuthentication();
+        // Initialize proxy client asynchronously
+        executor.execute(() -> {
+            synchronized (proxyClientLock) {
+                proxyClient = createProxyClient();
+                proxyClientLock.notifyAll();
+            }
+        });
         initializeViews();
         configureWebView();
         setupClickListeners();
         generateNewSession();
     }
-
+    private OkHttpClient getProxyClient() throws InterruptedException {
+        synchronized (proxyClientLock) {
+            while (proxyClient == null) {
+                proxyClientLock.wait();
+            }
+            return proxyClient;
+        }
+    }
     private void generateNewSession() {
         currentSessionId = UUID.randomUUID().toString();
     }
@@ -140,8 +157,9 @@ public class MainActivity extends AppCompatActivity {
 
                     Future<WebResourceResponse> future = executor.submit(() -> {
                         try {
-                            OkHttpClient proxyClient = createProxyClient();
 
+                            // Get the proxy client safely
+                            OkHttpClient client = getProxyClient();
                             // Use stored user agent string instead of accessing WebView
                             String proxyAuth = PROXY_USERNAME + "-session-" + sessionId + ":" + PROXY_PASSWORD;
                             String credentials = android.util.Base64.encodeToString(
@@ -157,7 +175,7 @@ public class MainActivity extends AppCompatActivity {
                                     .header("X-Rotate", "true")
                                     .build();
 
-                            Response response = proxyClient.newCall(request).execute();
+                            Response response = client.newCall(request).execute();
                             String proxyIp = response.header("X-Proxy-IP");
                             if (proxyIp != null) {
                                 Log.d("ProxyBrowser", "Using IP: " + proxyIp);
