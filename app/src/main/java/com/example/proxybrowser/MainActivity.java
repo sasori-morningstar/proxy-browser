@@ -1,6 +1,7 @@
 package com.example.proxybrowser;
 
 import android.os.Bundle;
+import android.webkit.MimeTypeMap;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -18,6 +19,9 @@ import java.net.Proxy;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import okhttp3.ConnectionPool;
+import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -46,15 +50,38 @@ public class MainActivity extends AppCompatActivity {
     //Content type mappings
     private static final Map<String, String> CONTENT_TYPE_MAP = new HashMap<>();
     static {
+        // Text formats
         CONTENT_TYPE_MAP.put("text/html", "text/html");
+        CONTENT_TYPE_MAP.put("text/plain", "text/plain");
+        CONTENT_TYPE_MAP.put("text/css", "text/css");
+
+        // JavaScript
         CONTENT_TYPE_MAP.put("application/javascript", "application/javascript");
         CONTENT_TYPE_MAP.put("text/javascript", "application/javascript");
-        CONTENT_TYPE_MAP.put("text/css", "text/css");
+        CONTENT_TYPE_MAP.put("application/x-javascript", "application/javascript");
+
+        // Images
         CONTENT_TYPE_MAP.put("image/jpeg", "image/jpeg");
+        CONTENT_TYPE_MAP.put("image/jpg", "image/jpeg");
         CONTENT_TYPE_MAP.put("image/png", "image/png");
         CONTENT_TYPE_MAP.put("image/gif", "image/gif");
+        CONTENT_TYPE_MAP.put("image/webp", "image/webp");
+        CONTENT_TYPE_MAP.put("image/svg+xml", "image/svg+xml");
+        CONTENT_TYPE_MAP.put("image/x-icon", "image/x-icon");
+
+        // Video
+        CONTENT_TYPE_MAP.put("video/mp4", "video/mp4");
+        CONTENT_TYPE_MAP.put("video/webm", "video/webm");
+        CONTENT_TYPE_MAP.put("video/ogg", "video/ogg");
+
+        // Audio
+        CONTENT_TYPE_MAP.put("audio/mpeg", "audio/mpeg");
+        CONTENT_TYPE_MAP.put("audio/ogg", "audio/ogg");
+        CONTENT_TYPE_MAP.put("audio/wav", "audio/wav");
+
+        // Application types
         CONTENT_TYPE_MAP.put("application/json", "application/json");
-        CONTENT_TYPE_MAP.put("text/plain", "text/plain");
+        CONTENT_TYPE_MAP.put("application/xml", "application/xml");
         CONTENT_TYPE_MAP.put("application/x-www-form-urlencoded", "application/x-www-form-urlencoded");
     }
     @Override
@@ -85,14 +112,28 @@ public class MainActivity extends AppCompatActivity {
         }
     }
     private void generateNewSession() {
-        currentSessionId = UUID.randomUUID().toString();
+        // Generate new session only if not already generated for the current domain
+        if (currentSessionId == null) {
+            currentSessionId = UUID.randomUUID().toString();
+        }
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         if (executor != null) {
-            executor.shutdown();
+            executor.shutdownNow(); // Force shutdown of all tasks
+            try {
+                if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+            }
+        }
+        if (proxyClient != null) {
+            proxyClient.dispatcher().executorService().shutdown();
+            proxyClient.connectionPool().evictAll();
         }
     }
 
@@ -119,6 +160,24 @@ public class MainActivity extends AppCompatActivity {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .connectionPool(new ConnectionPool(5, 1, TimeUnit.MINUTES))
+                .addInterceptor(new Interceptor() {
+                    @Override
+                    public Response intercept(Chain chain) throws IOException {
+                        Request request = chain.request();
+                        Response response = null;
+                        try {
+                            response = chain.proceed(request);
+                            return response;
+                        } catch (IOException e) {
+                            if (response != null) {
+                                response.close();
+                            }
+                            throw e;
+                        }
+                    }
+                })
                 .build();
     }
 
@@ -137,6 +196,22 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
+
+        webSettings.setAllowFileAccess(true);
+        webSettings.setMediaPlaybackRequiresUserGesture(false);
+        webSettings.setLoadsImagesAutomatically(true);
+        webSettings.setAllowContentAccess(true);
+        webSettings.setUseWideViewPort(true);
+        webSettings.setLoadWithOverviewMode(true);
+        webSettings.setBuiltInZoomControls(true);
+        webSettings.setDisplayZoomControls(false);
+
+        // Enable additional settings
+        webSettings.setBlockNetworkLoads(false);
+        webSettings.setAllowUniversalAccessFromFileURLs(true);
+        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+        webSettings.setSupportMultipleWindows(true);
+
         // Store the user agent string once
         userAgentString = webSettings.getUserAgentString();
 
@@ -145,6 +220,10 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                if (shouldSkipInterception(url)) {
+                    return null;
+                }
+
                 try {
                     String domain = getDomainFromUrl(url);
                     if (!domain.equals(lastDomain)) {
@@ -152,63 +231,109 @@ public class MainActivity extends AppCompatActivity {
                         lastDomain = domain;
                     }
 
-                    // Create final copy of the current session ID to use in lambda
                     final String sessionId = currentSessionId;
 
                     Future<WebResourceResponse> future = executor.submit(() -> {
+                        Response response = null;
                         try {
-
-                            // Get the proxy client safely
                             OkHttpClient client = getProxyClient();
-                            // Use stored user agent string instead of accessing WebView
-                            String proxyAuth = PROXY_USERNAME + "-session-" + sessionId + ":" + PROXY_PASSWORD;
-                            String credentials = android.util.Base64.encodeToString(
-                                    proxyAuth.getBytes(),
-                                    android.util.Base64.NO_WRAP
-                            );
-
                             Request request = new Request.Builder()
                                     .url(url)
                                     .header("User-Agent", userAgentString)
-                                    .header("Proxy-Authorization", "Basic " + credentials)
                                     .header("X-Session-ID", sessionId)
                                     .header("X-Rotate", "true")
                                     .build();
 
-                            Response response = client.newCall(request).execute();
-                            String proxyIp = response.header("X-Proxy-IP");
-                            if (proxyIp != null) {
-                                Log.d("ProxyBrowser", "Using IP: " + proxyIp);
+                            response = client.newCall(request).execute();
+
+                            // Immediately read the entire response body into memory
+                            byte[] responseBytes = response.body().bytes();
+                            String contentType = response.header("Content-Type", "");
+                            if (contentType.isEmpty()) {
+                                contentType = guessMimeType(url);
                             }
-                            // Get content type from response
-                            String contentType = response.header("Content-Type", "text/plain");
-                            String mimeType = extractMimeType(contentType);
-                            String encoding = extractCharset(contentType);
-                            // Log for debugging
-                            Log.d("ProxyBrowser", "URL: " + url);
-                            Log.d("ProxyBrowser", "Original Content-Type: " + contentType);
-                            Log.d("ProxyBrowser", "Mapped MIME Type: " + mimeType);
-                            Log.d("ProxyBrowser", "Encoding: " + encoding);
-                            return new WebResourceResponse(
-                                    mimeType,
-                                    encoding,
-                                    response.body().byteStream()
+
+                            // Create response before closing
+                            WebResourceResponse webResponse = new WebResourceResponse(
+                                    extractMimeType(contentType),
+                                    extractCharset(contentType),
+                                    new java.io.ByteArrayInputStream(responseBytes)
                             );
+
+                            // Add CORS headers
+                            Map<String, String> headers = new HashMap<>();
+                            headers.put("Access-Control-Allow-Origin", "*");
+                            headers.put("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+                            headers.put("Access-Control-Allow-Headers", "Origin, Content-Type, Accept");
+                            webResponse.setResponseHeaders(headers);
+
+                            return webResponse;
+
                         } catch (IOException e) {
-                            e.printStackTrace();
+                            Log.e("ProxyBrowser", "Request failed for URL: " + url, e);
                             return null;
+                        } finally {
+                            if (response != null && response.body() != null) {
+                                response.close();
+                            }
                         }
                     });
 
                     return future.get(30, TimeUnit.SECONDS);
+
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    Log.e("ProxyBrowser", "Interception failed for URL: " + url, e);
                     return null;
                 }
             }
         });
     }
+    private boolean shouldSkipInterception(String url) {
+        // Skip data URLs
+        if (url.startsWith("data:")) {
+            return true;
+        }
 
+        // Skip blob URLs
+        if (url.startsWith("blob:")) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private String guessMimeType(String url) {
+        // Guess MIME type based on file extension
+        String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+        if (extension != null) {
+            String mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.toLowerCase());
+            if (mimeType != null) {
+                return mimeType;
+            }
+        }
+
+        // Fallback to checking common extensions
+        if (url.endsWith(".js")) return "application/javascript";
+        if (url.endsWith(".css")) return "text/css";
+        if (url.endsWith(".jpg") || url.endsWith(".jpeg")) return "image/jpeg";
+        if (url.endsWith(".png")) return "image/png";
+        if (url.endsWith(".gif")) return "image/gif";
+        if (url.endsWith(".webp")) return "image/webp";
+        if (url.endsWith(".svg")) return "image/svg+xml";
+        if (url.endsWith(".mp4")) return "video/mp4";
+        if (url.endsWith(".webm")) return "video/webm";
+        if (url.endsWith(".mp3")) return "audio/mpeg";
+
+        // Additional check for URLs with query parameters
+        String baseUrl = url.split("\\?")[0];
+        if (baseUrl.endsWith(".php") || baseUrl.endsWith(".aspx")) {
+            // Check if URL appears to be serving images
+            if (url.contains("/images/")) {
+                return "image/jpeg";
+            }
+        }
+        return "text/plain";
+    }
     private String getDomainFromUrl(String url) {
         try {
             java.net.URL urlObj = new java.net.URL(url);
@@ -306,4 +431,5 @@ public class MainActivity extends AppCompatActivity {
             super.onBackPressed();
         }
     }
+
 }
